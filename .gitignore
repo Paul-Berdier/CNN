@@ -1,5 +1,6 @@
 # Donnees brutes
 data/raw/*
+data/*.csv
 
 # DB
 chroma_db/*

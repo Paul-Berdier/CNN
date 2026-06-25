@@ -1,15 +1,15 @@
 # Donnees brutes
-data/raw/
+data/raw/*
 
 # Poids de modeles
 models/*
 !models/.gitkeep
 
 # MLflow
-mlruns/
+mlruns/*
 
 # Rapports Evidently
-reports/
+reports/*
 
 # Secrets
 .env

@@ -1,1 +1,2 @@
-# Dependances du projet
+chromadb
+sentence-transformers

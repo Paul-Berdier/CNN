@@ -34,5 +34,8 @@ class Settings:
     collection_medical: str = _env("COLLECTION_MEDICAL","connaissances_medicales")
     embed_model: str = _env("EMBED_MODEL","all-MiniLM-L6-v2")
     jsonl_path: str = _env("JSONL_PATH","data/base_connaissances_medicales.jsonl")
-
+    ollama_base_url: str = _env("OLLAMA_BASE_URL","http://localhost:11434/v1")
+    ollama_api_key: str = _env("OLLAMA_API_KEY","ollama")
+    llm_model: str = _env("LLM_MODEL","llama3.2")
+    default_temperature: float = _env_float("DEFAULT_TEMPERATURE",0.3)
 settings = Settings()

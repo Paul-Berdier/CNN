@@ -1,6 +1,10 @@
 # Donnees brutes
 data/raw/*
 
+# DB
+chroma_db/*
+
+
 # Poids de modeles
 models/*
 !models/.gitkeep

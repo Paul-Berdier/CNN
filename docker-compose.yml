@@ -1,0 +1,3 @@
+# docker-compose.yml
+# Services : à compléter (mlflow, langfuse, qdrant, ollama, app...)
+services: {}

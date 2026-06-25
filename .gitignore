@@ -1,0 +1,22 @@
+# Donnees brutes
+data/raw/
+
+# Poids de modeles
+models/*
+!models/.gitkeep
+
+# MLflow
+mlruns/
+
+# Rapports Evidently
+reports/
+
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/

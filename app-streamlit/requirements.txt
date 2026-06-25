@@ -1,0 +1,2 @@
+# Dependances specifiques a l app Streamlit
+streamlit

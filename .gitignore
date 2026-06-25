@@ -6,7 +6,7 @@ chroma_db/*
 
 
 # Poids de modeles
-models/*
+models/*.pth
 !models/.gitkeep
 
 # MLflow

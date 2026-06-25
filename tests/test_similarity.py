@@ -324,7 +324,7 @@ class TestSimilarityPipeline:
         mock_extractor.predict.return_value = np.random.rand(1, 4).astype(np.float32)
         mock_extractor.input = MagicMock()
 
-        with patch("core.pipeline.load_feature_extractor", return_value=mock_extractor):
+        with patch("core.pipeline.load_feature_extractor", return_value=mock_extractor) as _:
             pipeline = SimilarityPipeline(
                 model_path="fake_model.h5",
                 chroma_dir=str(tmp_path / "chroma"),

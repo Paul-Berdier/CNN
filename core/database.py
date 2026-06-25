@@ -153,9 +153,13 @@ def search_similar(
     # On demande k+1 résultats si on doit en exclure un
     n_results = k + 1 if exclude_id else k
 
+    actual_n = min(n_results, collection.count())
+    if actual_n == 0:
+        return []
+
     raw = collection.query(
         query_embeddings=[query_embedding.tolist()],
-        n_results=min(n_results, collection.count()),  # on ne peut pas demander plus que ce qui existe
+        n_results=actual_n,
         include=["metadatas", "distances"]
     )
 

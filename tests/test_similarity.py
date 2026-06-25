@@ -18,6 +18,7 @@ Lancement :
 """
 
 import pytest
+import torch
 import numpy as np
 import tempfile
 import os
@@ -122,15 +123,13 @@ class TestNormalization:
         """Un vecteur nul ne doit pas provoquer une division par zéro."""
         from core.image_similarity import extract_embedding
 
-        # On mocke extractor.predict() pour retourner un vecteur nul
         mock_extractor = MagicMock()
-        mock_extractor.predict.return_value = np.zeros((1, 2048))
+        # PyTorch : l'extractor est appelé comme une fonction, pas .predict()
+        mock_extractor.return_value = torch.zeros(1, 2048)
 
-        # On mocke aussi preprocess_image pour ne pas avoir besoin d'une vraie image
-        with patch("core.image_similarity.preprocess_image", return_value=np.zeros((1, 224, 224, 3))):
+        with patch("core.image_similarity.preprocess_image", return_value=torch.zeros(1, 3, 224, 224)):
             embedding = extract_embedding(mock_extractor, "fake_path.jpg")
 
-        # Le vecteur nul reste nul (pas de NaN, pas d'erreur)
         assert not np.any(np.isnan(embedding)), "Le vecteur nul ne doit pas produire de NaN"
         assert np.all(embedding == 0), "Le vecteur nul doit rester nul"
 
@@ -324,11 +323,9 @@ class TestSimilarityPipeline:
         mock_extractor.predict.return_value = np.random.rand(1, 4).astype(np.float32)
         mock_extractor.input = MagicMock()
 
-        with patch("core.pipeline.load_feature_extractor", return_value=mock_extractor) as _:
+        with patch("core.pipeline.load_feature_extractor", return_value=mock_extractor):
             pipeline = SimilarityPipeline(
-                model_path="fake_model.h5",
-                chroma_dir=str(tmp_path / "chroma"),
-                target_size=(224, 224)
+                chroma_dir=str(tmp_path / "chroma")
             )
 
         return pipeline

@@ -8,6 +8,7 @@ models/*
 
 # MLflow
 mlruns/*
+mlflow.db
 
 # Rapports Evidently
 reports/*

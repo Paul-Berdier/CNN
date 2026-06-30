@@ -1,8 +1,9 @@
-"""Entraînement ResNet50 / VGG16 sur la classification des plaies, avec suivi MLflow.
+"""Entraînement ResNet50 / VGG16 / EfficientNetB0 sur la classification des plaies, avec suivi MLflow.
 
 Exemple :
     python scripts/train.py --arch resnet50 --lr 1e-3 --batch-size 16 --epochs 30
     python scripts/train.py --arch vgg16 --lr 1e-4 --batch-size 16 --epochs 30 --unfreeze-n 2
+    python scripts/train.py --arch efficientnet_b0 --lr 1e-3 --batch-size 16 --epochs 30
 """
 
 import argparse
@@ -16,20 +17,23 @@ from sklearn.metrics import classification_report, confusion_matrix, ConfusionMa
 from torch.utils.data import DataLoader
 
 from core.dataset import load_datasets
-from core.model_utils import build_resnet50, build_vgg16, unfreeze_last_layers
+from core.model_utils import build_resnet50, build_vgg16, build_efficientnet_b0, unfreeze_last_layers
 
 DATA_PATH = "data/processed/data_preprocess.pkl"
 MODELS_DIR = "models"
 EXPERIMENT_NAME = "wound-classification"
 
+BUILDERS = {
+    "resnet50": build_resnet50,
+    "vgg16": build_vgg16,
+    "efficientnet_b0": build_efficientnet_b0,
+}
+
 
 def build_model(arch, num_classes, dropout, unfreeze_n):
-    if arch == "resnet50":
-        model = build_resnet50(num_classes, freeze_base=True, dropout=dropout)
-    elif arch == "vgg16":
-        model = build_vgg16(num_classes, freeze_base=True, dropout=dropout)
-    else:
+    if arch not in BUILDERS:
         raise ValueError(f"Architecture inconnue : {arch}")
+    model = BUILDERS[arch](num_classes, freeze_base=True, dropout=dropout)
 
     if unfreeze_n > 0:
         unfreeze_last_layers(model, unfreeze_n)
@@ -76,7 +80,7 @@ def evaluate_test(model, loader, device, classes):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--arch", choices=["resnet50", "vgg16"], required=True)
+    parser.add_argument("--arch", choices=["resnet50", "vgg16", "efficientnet_b0"], required=True)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--dropout", type=float, default=0.5)

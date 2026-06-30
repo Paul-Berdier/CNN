@@ -7,4 +7,4 @@ torchvision
 matplotlib
 seaborn
 scikit-learn
-mlflow
+mlflow-skinny

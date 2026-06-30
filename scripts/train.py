@@ -15,7 +15,12 @@ import matplotlib.pyplot as plt
 import mlflow
 import torch
 import torch.nn as nn
-from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
+from sklearn.metrics import (
+    classification_report,
+    confusion_matrix,
+    ConfusionMatrixDisplay,
+    precision_recall_fscore_support,
+)
 from torch.utils.data import DataLoader
 
 from core.dataset import load_datasets
@@ -79,7 +84,23 @@ def evaluate_test(model, loader, device, classes):
 
     report = classification_report(all_labels, all_preds, target_names=classes)
     cm = confusion_matrix(all_labels, all_preds)
-    return report, cm, all_images, all_labels, all_preds
+
+    # Métriques explicites pour MLflow (recall_macro = métrique de décision, cf. contexte
+    # médical : on veut comparer/trier les runs en minimisant les faux négatifs)
+    precision_macro, recall_macro, f1_macro, _ = precision_recall_fscore_support(
+        all_labels, all_preds, average="macro", zero_division=0
+    )
+    _, recall_per_class, _, _ = precision_recall_fscore_support(
+        all_labels, all_preds, average=None, labels=range(len(classes)), zero_division=0
+    )
+    metrics = {
+        "test_precision_macro": precision_macro,
+        "test_recall_macro": recall_macro,
+        "test_f1_macro": f1_macro,
+    }
+    metrics.update({f"test_recall_{c}": r for c, r in zip(classes, recall_per_class)})
+
+    return report, cm, all_images, all_labels, all_preds, metrics
 
 
 def plot_training_curves(history, output_path):
@@ -221,8 +242,11 @@ def main():
 
         # Réévaluation avec les meilleurs poids (val_loss minimale)
         model.load_state_dict(torch.load(best_path))
-        report, cm, test_images, test_labels, test_preds = evaluate_test(model, test_loader, device, classes)
+        report, cm, test_images, test_labels, test_preds, test_metrics = evaluate_test(
+            model, test_loader, device, classes
+        )
         print(report)
+        mlflow.log_metrics(test_metrics)
 
         report_path = os.path.join(MODELS_DIR, f"{run_name}_classification_report.txt")
         with open(report_path, "w", encoding="utf-8") as f:

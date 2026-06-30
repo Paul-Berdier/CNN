@@ -16,6 +16,32 @@ BUILDERS = {
     "efficientnet_b0": build_efficientnet_b0,
 }
 
+# Ordre alphabétique standard du projet (cf. core.dataset.load_datasets), utilisé par
+# défaut pour les checkpoints qui n'ont pas de class_to_idx sauvegardé.
+DEFAULT_CLASSES = ["Abrasions", "Bruises", "Burns", "Cut", "Ingrown_nails", "Laceration", "Stab_wound"]
+
+
+def load_model_raw(weights_path, arch, class_to_idx=None, device=None):
+    """Charge un state_dict brut (torch.save(model.state_dict(), ...)) sans config.json associé.
+
+    Cas des checkpoints produits hors de scripts/train.py (ex. models/Resnet_weights.pth,
+    models/Efficientnet_weights.pth, issus de notebooks/Entrainnement_modèle*.ipynb) :
+    pas de class_to_idx ni d'hyperparamètres sauvegardés. On suppose l'ordre alphabétique
+    standard du projet (DEFAULT_CLASSES) sauf si class_to_idx est fourni explicitement,
+    et le dropout par défaut de chaque builder (cf. core/model_utils.py), qui correspond
+    à ce que ces notebooks utilisaient (pas de dropout pour ResNet50, 0.2 pour EfficientNetB0).
+
+    Retourne (model, class_to_idx).
+    """
+    device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    class_to_idx = class_to_idx or {c: i for i, c in enumerate(DEFAULT_CLASSES)}
+
+    model = BUILDERS[arch](len(class_to_idx), freeze_base=False)
+    model.load_state_dict(torch.load(weights_path, map_location=device))
+    model.to(device).eval()
+
+    return model, class_to_idx
+
 
 def load_model(checkpoint_prefix, device=None):
     """Charge les poids + la config sauvegardés par scripts/train.py.

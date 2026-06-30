@@ -18,9 +18,8 @@ MODELS_DIR = "models"
 
 
 def parse_classification_report(text):
-    """Extrait accuracy, F1 macro et F1 par classe d'un classification_report sklearn (texte)."""
+    """Extrait accuracy, recall/F1 macro et F1 par classe d'un classification_report sklearn (texte)."""
     lines = [l for l in text.strip().splitlines() if l.strip()]
-    header = lines[0].split()
     per_class_f1 = {}
 
     for line in lines[1:]:
@@ -28,7 +27,7 @@ def parse_classification_report(text):
         if line.strip().startswith("accuracy"):
             accuracy = float(parts[-2])
         elif line.strip().startswith("macro avg"):
-            macro_f1 = float(parts[-2])
+            macro_precision, macro_recall, macro_f1 = (float(p) for p in parts[-4:-1])
         elif line.strip().startswith("weighted avg"):
             weighted_f1 = float(parts[-2])
         else:
@@ -39,6 +38,8 @@ def parse_classification_report(text):
 
     return {
         "accuracy": accuracy,
+        "macro_precision": macro_precision,
+        "macro_recall": macro_recall,
         "macro_f1": macro_f1,
         "weighted_f1": weighted_f1,
         "per_class_f1": per_class_f1,
@@ -62,6 +63,8 @@ def main():
             "run_name": run_name,
             "architecture": config["args"]["arch"],
             "accuracy": metrics["accuracy"],
+            "recall_macro": metrics["macro_recall"],
+            "precision_macro": metrics["macro_precision"],
             "f1_macro": metrics["macro_f1"],
             "f1_weighted": metrics["weighted_f1"],
         }
@@ -72,7 +75,9 @@ def main():
         print("Aucun run avec config + classification_report trouvé dans models/.")
         return
 
-    df = pd.DataFrame(rows).sort_values("f1_macro", ascending=False)
+    # Trié par recall_macro : en contexte médical on priorise la minimisation des faux
+    # négatifs (cf. justification dans notebooks/MLFlow.ipynb).
+    df = pd.DataFrame(rows).sort_values("recall_macro", ascending=False)
     print(df.to_string(index=False))
 
     output_path = os.path.join(MODELS_DIR, "runs_comparison.csv")

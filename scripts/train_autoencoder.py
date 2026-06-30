@@ -29,7 +29,9 @@ import argparse
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
 import matplotlib.pyplot as plt
+import mlflow
 from sklearn.model_selection import train_test_split
 
 from core.autoencoder import (
@@ -39,6 +41,37 @@ from core.autoencoder import (
     compute_ood_threshold,
     DEVICE,
 )
+
+EXPERIMENT_NAME = "ood-detection"
+
+
+@torch.no_grad()
+def compute_reconstruction_errors(model, loader):
+    """Erreur de reconstruction (MSE) par image, pour l'histogramme de calibration."""
+    model.eval()
+    criterion = nn.MSELoss(reduction="none")
+    errors = []
+    for batch in loader:
+        inputs = batch[0].to(DEVICE)
+        outputs = model(inputs)
+        loss = criterion(outputs, inputs)
+        errors.extend(loss.mean(dim=[1, 2, 3]).cpu().numpy().tolist())
+    return errors
+
+
+def plot_error_histogram(errors, threshold, percentile, save_path):
+    """Histogramme des erreurs de reconstruction in-domain avec le seuil calibré."""
+    plt.figure(figsize=(8, 4))
+    plt.hist(errors, bins=40, alpha=0.7, label="In-domain (validation)")
+    plt.axvline(threshold, color="red", ls="--", label=f"Seuil p{percentile}")
+    plt.xlabel("Erreur de reconstruction")
+    plt.ylabel("Nb images")
+    plt.title("Distribution des erreurs in-domain (calibration du seuil OOD)")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+    print(f"Histogramme sauvegardé → {save_path}")
 
 
 # ─────────────────────────────────────────────
@@ -130,40 +163,67 @@ def main(args):
     model = WoundAutoencoder().to(DEVICE)
     print(f"\nArchitecture autoencoder prête sur {DEVICE}")
 
-    # ── Entraînement ─────────────────────────
-    print("\n" + "─" * 50)
-    loss_history = train_autoencoder(
-        model=model,
-        dataloader=train_loader,
-        epochs=args.epochs,
-        lr=args.lr,
-        save_path="models/wound_autoencoder.pth"
-    )
-
-    # Courbe de loss
     os.makedirs("models", exist_ok=True)
-    plot_loss_curve(loss_history)
 
-    # ── Seuil OOD ────────────────────────────
-    print("\n" + "─" * 50)
-    print("Calibration du seuil OOD sur le jeu de validation...")
-    threshold = compute_ood_threshold(
-        model=model,
-        val_loader=val_loader,
-        percentile=args.percentile
-    )
+    mlflow.set_experiment(EXPERIMENT_NAME)
+    with mlflow.start_run(run_name="wound_autoencoder"):
+        mlflow.log_params({
+            "architecture": "WoundAutoencoder",
+            "epochs": args.epochs,
+            "batch_size": args.batch,
+            "lr": args.lr,
+            "percentile": args.percentile,
+            "n_train": len(train_df),
+            "n_val": len(val_df),
+        })
 
-    # Sauvegarde du seuil dans un fichier JSON
-    # → utilisé par Streamlit (P4) et verify_image_domain()
-    threshold_data = {
-        "threshold":  threshold,
-        "percentile": args.percentile,
-        "n_val":      len(val_df),
-        "dataset":    args.dataset
-    }
-    with open("models/ood_threshold.json", "w") as f:
-        json.dump(threshold_data, f, indent=4)
-    print(f"Seuil OOD sauvegardé → models/ood_threshold.json")
+        # ── Entraînement ─────────────────────────
+        print("\n" + "─" * 50)
+        loss_history = train_autoencoder(
+            model=model,
+            dataloader=train_loader,
+            epochs=args.epochs,
+            lr=args.lr,
+            save_path="models/wound_autoencoder.pth"
+        )
+        for epoch, loss in enumerate(loss_history):
+            mlflow.log_metric("recon_loss", loss, step=epoch)
+
+        # Courbe de loss
+        plot_loss_curve(loss_history)
+
+        # ── Seuil OOD ────────────────────────────
+        print("\n" + "─" * 50)
+        print("Calibration du seuil OOD sur le jeu de validation...")
+        threshold = compute_ood_threshold(
+            model=model,
+            val_loader=val_loader,
+            percentile=args.percentile
+        )
+        mlflow.log_metric("ood_threshold", threshold)
+
+        # Histogramme des erreurs in-domain (validation) avec le seuil calibré
+        val_errors = compute_reconstruction_errors(model, val_loader)
+        histogram_path = "models/autoencoder_error_histogram.png"
+        plot_error_histogram(val_errors, threshold, args.percentile, histogram_path)
+
+        # Sauvegarde du seuil dans un fichier JSON
+        # → utilisé par Streamlit (P4) et verify_image_domain()
+        threshold_data = {
+            "threshold":  threshold,
+            "percentile": args.percentile,
+            "n_val":      len(val_df),
+            "dataset":    args.dataset
+        }
+        threshold_path = "models/ood_threshold.json"
+        with open(threshold_path, "w") as f:
+            json.dump(threshold_data, f, indent=4)
+        print(f"Seuil OOD sauvegardé → {threshold_path}")
+
+        mlflow.log_artifact("models/wound_autoencoder.pth")
+        mlflow.log_artifact("models/autoencoder_loss.png")
+        mlflow.log_artifact(histogram_path)
+        mlflow.log_artifact(threshold_path)
 
     # ── Résumé final ─────────────────────────
     print("\n" + "═" * 50)

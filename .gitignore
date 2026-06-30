@@ -1,5 +1,6 @@
 # Donnees brutes
 data/raw/*
+data/processed/*
 
 # Poids de modeles
 models/*
@@ -13,6 +14,7 @@ reports/*
 
 # Secrets
 .env
+.**
 
 # Python
 __pycache__/

@@ -1,3 +1,13 @@
+# Dependances du projet
 chromadb
 sentence-transformers
 openai
+numpy
+pandas==3.0.3
+pillow
+torch
+torchvision
+matplotlib
+seaborn
+scikit-learn
+mlflow-skinny

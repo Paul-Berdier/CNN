@@ -2,6 +2,9 @@
 data/raw/*
 data/processed/*
 
+# DB
+chroma_db/*
+
 # Poids de modeles
 models/*
 !models/.gitkeep

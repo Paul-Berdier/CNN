@@ -1,9 +1,14 @@
 # Donnees brutes
 data/raw/*
 data/processed/*
+data/*.csv
+
+# DB
+chroma_db/*
+
 
 # Poids de modeles
-models/*
+models/*.pth
 !models/.gitkeep
 
 # MLflow

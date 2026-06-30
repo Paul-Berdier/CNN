@@ -1,4 +1,7 @@
 # Dependances du projet
+chromadb
+sentence-transformers
+openai
 numpy
 pandas==3.0.3
 pillow

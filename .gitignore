@@ -1,5 +1,6 @@
 # Donnees brutes
 data/raw/*
+data/processed/*
 data/*.csv
 
 # DB
@@ -12,12 +13,14 @@ models/*.pth
 
 # MLflow
 mlruns/*
+mlflow.db
 
 # Rapports Evidently
 reports/*
 
 # Secrets
 .env
+.**
 
 # Python
 __pycache__/

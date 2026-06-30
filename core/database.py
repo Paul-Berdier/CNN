@@ -1,158 +1,110 @@
+# -*- coding: utf-8 -*-
+"""database.py — Connexion et opérations sur la base vectorielle (ChromaDB).
+
+Ce module gère DEUX collections distinctes dans une même base ChromaDB :
+
+  1. `wound_images`            -> embeddings d'IMAGES (similarité visuelle, Partie 2).
+                                  Les vecteurs (sortie du CNN) sont fournis à la main.
+  2. `connaissances_medicales` -> documents TEXTE des protocoles (RAG, Partie 5).
+                                  Le texte est embeddé automatiquement (sentence-transformers).
+
+Les deux collections partagent le même client / le même dossier sur disque,
+mais restent séparées (embeddings de natures différentes).
+
+Dépendances : pip install chromadb sentence-transformers
 """
-database.py
------------
-Interface avec ChromaDB pour stocker et rechercher les embeddings d'images.
+from __future__ import annotations
 
-Principe (analogie bio) :
-ChromaDB c'est comme une mémoire à long terme organisée par "similarité de forme".
-Au lieu de chercher un mot-clé exact, on cherche "ce qui ressemble à ça".
-C'est exactement ce dont le clinicien a besoin : pas "trouve-moi un ulcère veineux"
-mais "trouve-moi des plaies qui ressemblent visuellement à celle-ci".
+import json
+from pathlib import Path
+from typing import Optional
 
-Dépendance : chromadb  →  pip install chromadb
-"""
-
+import numpy as np
 import chromadb
 from chromadb.config import Settings
-import numpy as np
-from pathlib import Path
+from chromadb.utils import embedding_functions
+
+from core.config import settings
 
 
 # ─────────────────────────────────────────────
-# 1. Connexion à ChromaDB
+# 0. Client ChromaDB (partagé par les deux collections)
 # ─────────────────────────────────────────────
+def get_chroma_client(persist_dir: str | None = None) -> chromadb.PersistentClient:
+    """Crée ou ouvre la base ChromaDB persistante (un dossier sur disque).
 
-def get_chroma_client(persist_dir: str = "./chroma_db") -> chromadb.PersistentClient:
+    Le mode persistant garantit que les embeddings survivent entre deux
+    exécutions. Par défaut, on utilise le chemin défini dans la config, afin
+    que les images ET les documents médicaux vivent dans la même base.
     """
-    Crée ou ouvre une base ChromaDB persistante sur disque.
-
-    Le mode "persistant" est important : les embeddings survivent
-    entre deux exécutions du programme. Sinon tout est perdu au redémarrage.
-
-    Args:
-        persist_dir : dossier où ChromaDB stocke ses données
-
-    Returns:
-        client ChromaDB prêt à l'emploi
-    """
-    # Création du dossier si nécessaire
+    persist_dir = persist_dir or settings.chroma_path
     Path(persist_dir).mkdir(parents=True, exist_ok=True)
+    return chromadb.PersistentClient(
+        path=persist_dir,
+        settings=Settings(anonymized_telemetry=False),
+    )
 
-    client = chromadb.PersistentClient(path=persist_dir)
-    print(f"ChromaDB connecté → {persist_dir}")
-    return client
+
+def get_client_chromadb() -> chromadb.PersistentClient:
+    """Alias conservé pour la partie 5 — pointe sur le même client/DB."""
+    return get_chroma_client()
 
 
-# ─────────────────────────────────────────────
-# 2. Création / récupération de la collection
-# ─────────────────────────────────────────────
-
+# ═════════════════════════════════════════════════════════════════════════
+# PARTIE 2 — Collection d'IMAGES (similarité visuelle)
+# ═════════════════════════════════════════════════════════════════════════
 def get_or_create_collection(
     client: chromadb.PersistentClient,
-    collection_name: str = "wound_images"
+    collection_name: str = "wound_images",
 ) -> chromadb.Collection:
-    """
-    Récupère la collection d'embeddings d'images si elle existe,
-    la crée sinon.
+    """Récupère (ou crée) la collection d'embeddings d'images.
 
-    Une "collection" dans ChromaDB = une table dans une BDD classique,
-    mais optimisée pour la recherche par similarité vectorielle.
-
-    Args:
-        client          : client ChromaDB
-        collection_name : nom de la collection (on en aura une autre pour le RAG)
-
-    Returns:
-        collection ChromaDB
+    Métrique cosinus, adaptée aux embeddings normalisés L2 produits par le CNN.
+    (Pas de fonction d'embedding attachée : on fournit les vecteurs nous-mêmes.)
     """
     collection = client.get_or_create_collection(
         name=collection_name,
-        # Métrique de distance : cosinus
-        # Adapté aux embeddings normalisés L2 (ce qu'on produit dans image_similarity.py)
-        metadata={"hnsw:space": "cosine"}
+        metadata={"hnsw:space": "cosine"},
     )
-
     print(f"Collection '{collection_name}' : {collection.count()} embeddings existants")
     return collection
 
 
-# ─────────────────────────────────────────────
-# 3. Insertion des embeddings dans la base
-# ─────────────────────────────────────────────
-
 def insert_embeddings(
     collection: chromadb.Collection,
     records: list[dict],
-    batch_size: int = 100
+    batch_size: int = 100,
 ) -> None:
-    """
-    Insère une liste d'embeddings dans ChromaDB.
+    """Insère une liste d'embeddings d'images dans ChromaDB, par batch.
 
-    On insère par batch pour éviter de surcharger la mémoire
-    si le dataset est grand.
-
-    Args:
-        collection : collection ChromaDB cible
-        records    : liste de dicts produite par extract_all_embeddings()
-                     Chaque dict doit avoir : "id", "path", "class", "embedding"
-        batch_size : nombre d'embeddings insérés par appel
+    Chaque record : {"id", "path", "class", "embedding"} (embedding = np.ndarray).
+    `upsert` = insert si nouveau, update sinon (relançable sans doublon).
     """
     total = len(records)
     inserted = 0
-
-    # Traitement par batch
     for start in range(0, total, batch_size):
         batch = records[start : start + batch_size]
-
-        ids         = [r["id"] for r in batch]
-        embeddings  = [r["embedding"].tolist() for r in batch]  # ChromaDB veut des listes Python
-        metadatas   = [{"path": r["path"], "class": r["class"]} for r in batch]
-
-        # upsert = insert si nouveau, update si l'id existe déjà
-        # Pratique pour relancer le script sans dupliquer
-        collection.upsert(
-            ids=ids,
-            embeddings=embeddings,
-            metadatas=metadatas
-        )
-
+        ids = [r["id"] for r in batch]
+        embeddings = [r["embedding"].tolist() for r in batch]  # ChromaDB veut des listes Python
+        metadatas = [{"path": r["path"], "class": r["class"]} for r in batch]
+        collection.upsert(ids=ids, embeddings=embeddings, metadatas=metadatas)
         inserted += len(batch)
         print(f"  Inséré {inserted}/{total} embeddings...")
-
     print(f"Insertion terminée : {total} embeddings dans la collection")
 
-
-# ─────────────────────────────────────────────
-# 4. Recherche des K plus proches voisins
-# ─────────────────────────────────────────────
 
 def search_similar(
     collection: chromadb.Collection,
     query_embedding: np.ndarray,
     k: int = 5,
-    exclude_id: str = None
+    exclude_id: Optional[str] = None,
 ) -> list[dict]:
-    """
-    Recherche les K images les plus similaires à un embedding de requête.
+    """Recherche les K images les plus similaires à un embedding requête.
 
-    Args:
-        collection      : collection ChromaDB
-        query_embedding : vecteur numpy normalisé de l'image requête
-        k               : nombre de résultats à retourner
-        exclude_id      : ID à exclure des résultats (utile si l'image
-                          requête est déjà dans la base — évite de se
-                          retourner soi-même comme "meilleur résultat")
-
-    Returns:
-        results : liste de dicts avec les clés :
-                  - "id"         : identifiant de l'image
-                  - "path"       : chemin vers l'image
-                  - "class"      : classe de la plaie
-                  - "similarity" : score entre 0 et 1 (1 = identique)
+    `exclude_id` : id à exclure (évite que l'image requête se retourne elle-même).
+    Renvoie une liste de {"id", "path", "class", "similarity"} (similarity ∈ [0, 1]).
     """
-    # On demande k+1 résultats si on doit en exclure un
     n_results = k + 1 if exclude_id else k
-
     actual_n = min(n_results, collection.count())
     if actual_n == 0:
         return []
@@ -160,69 +112,149 @@ def search_similar(
     raw = collection.query(
         query_embeddings=[query_embedding.tolist()],
         n_results=actual_n,
-        include=["metadatas", "distances"]
+        include=["metadatas", "distances"],
     )
 
     results = []
-
-    ids        = raw["ids"][0]           # liste d'IDs
-    metadatas  = raw["metadatas"][0]     # liste de métadonnées
-    distances  = raw["distances"][0]     # liste de distances cosinus (entre 0 et 2)
+    ids = raw["ids"][0]
+    metadatas = raw["metadatas"][0]
+    distances = raw["distances"][0]  # distance cosinus ∈ [0, 2]
 
     for id_, meta, dist in zip(ids, metadatas, distances):
-
-        # On saute l'image requête si elle est dans la base
         if exclude_id and id_ == exclude_id:
             continue
-
-        # Conversion distance cosinus → similarité entre 0 et 1
-        # Distance cosinus ∈ [0, 2] → similarité = 1 - (dist / 2)
+        # distance cosinus ∈ [0, 2] -> similarité ∈ [0, 1]
         similarity = round(1 - (dist / 2), 4)
-
         results.append({
-            "id":         id_,
-            "path":       meta["path"],
-            "class":      meta["class"],
-            "similarity": similarity
+            "id": id_,
+            "path": meta["path"],
+            "class": meta["class"],
+            "similarity": similarity,
         })
-
-    # On s'assure de ne retourner que k résultats
     return results[:k]
 
 
-# ─────────────────────────────────────────────
-# 5. Utilitaires
-# ─────────────────────────────────────────────
-
 def get_collection_stats(collection: chromadb.Collection) -> dict:
-    """
-    Retourne des statistiques basiques sur la collection.
-    Utile pour la page d'accueil Streamlit (P4).
-    """
+    """Statistiques basiques sur la collection (utile pour la page d'accueil Streamlit)."""
     count = collection.count()
-
-    # Récupère tous les métadonnées pour compter par classe
     if count > 0:
         all_meta = collection.get(include=["metadatas"])["metadatas"]
-        class_counts = {}
+        class_counts: dict = {}
         for meta in all_meta:
             c = meta.get("class", "unknown")
             class_counts[c] = class_counts.get(c, 0) + 1
     else:
         class_counts = {}
-
-    return {
-        "total_images": count,
-        "class_distribution": class_counts
-    }
+    return {"total_images": count, "class_distribution": class_counts}
 
 
-def reset_collection(client: chromadb.PersistentClient, collection_name: str = "wound_images") -> None:
-    """
-    Supprime et recrée la collection.
-    À utiliser uniquement en développement pour repartir de zéro.
-
-    /!\ Irréversible — tous les embeddings sont perdus.
-    """
+def reset_collection(
+    client: chromadb.PersistentClient,
+    collection_name: str = "wound_images",
+) -> None:
+    """Supprime et recrée la collection d'images. /!\\ Irréversible (dev uniquement)."""
     client.delete_collection(collection_name)
     print(f"Collection '{collection_name}' supprimée.")
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# PARTIE 5 — Collection de CONNAISSANCES MÉDICALES (RAG)
+# ═════════════════════════════════════════════════════════════════════════
+def get_embedding_function():
+    """Fonction d'embedding sentence-transformers, attachée à la collection médicale.
+
+    Indexation et requêtes utilisent ainsi automatiquement le MÊME modèle.
+    """
+    return embedding_functions.SentenceTransformerEmbeddingFunction(
+        model_name=settings.embed_model,
+    )
+
+
+def get_collection_medical(client=None):
+    """Récupère (ou crée) la collection des documents médicaux, en cosinus."""
+    client = client or get_chroma_client()
+    return client.get_or_create_collection(
+        name=settings.collection_medical,
+        embedding_function=get_embedding_function(),
+        configuration={"hnsw": {"space": "cosine"}},
+        metadata={"description": "Protocoles de traitement des plaies (RAG - Partie 5)"},
+    )
+
+
+def _load_jsonl(jsonl_path: str) -> list[dict]:
+    docs = []
+    with open(jsonl_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                docs.append(json.loads(line))
+    return docs
+
+
+def index_knowledge_base(jsonl_path: str = settings.jsonl_path, reset: bool = False) -> int:
+    """Indexe la base JSONL des protocoles dans ChromaDB. Idempotent (upsert)."""
+    client = get_chroma_client()
+    if reset:
+        try:
+            client.delete_collection(settings.collection_medical)
+        except Exception:
+            pass
+
+    col = get_collection_medical(client)
+    docs = _load_jsonl(jsonl_path)
+
+    ids = [d["id"] for d in docs]
+    documents = [d["contenu"] for d in docs]
+    metadatas = [
+        {
+            "type_plaie": d["type_plaie"],
+            "categorie": d["categorie"],
+            "titre": d["titre"],
+            "source": d["source"],
+            "mots_cles": ", ".join(d.get("mots_cles", [])),
+        }
+        for d in docs
+    ]
+
+    col.upsert(ids=ids, documents=documents, metadatas=metadatas)
+    return col.count()
+
+
+def search_kb(query: str, type_plaie: Optional[str] = None, k: int = 3) -> list[dict]:
+    """Recherche sémantique dans la base médicale. Filtre optionnel par type de plaie."""
+    col = get_collection_medical()
+    where = {"type_plaie": type_plaie} if type_plaie else None
+    res = col.query(query_texts=[query], n_results=k, where=where)
+
+    resultats = []
+    for i in range(len(res["ids"][0])):
+        distance = res["distances"][0][i]
+        resultats.append(
+            {
+                "id": res["ids"][0][i],
+                "document": res["documents"][0][i],
+                "metadata": res["metadatas"][0][i],
+                "distance": distance,
+                "similarite": 1 - distance,
+            }
+        )
+    return resultats
+
+
+# ─────────────────────────────────────────────
+# Exécution directe : indexe la base médicale + démo de recherche
+#   $ python -m core.database
+# ─────────────────────────────────────────────
+if __name__ == "__main__":
+    n = index_knowledge_base(reset=True)
+    print(f"[OK] {n} documents indexés dans la collection '{settings.collection_medical}'.\n")
+
+    print("--- Requête libre : 'plaie qui ne cicatrise pas, faut-il consulter ?' ---")
+    for r in search_kb("plaie qui ne cicatrise pas, faut-il consulter un spécialiste ?", k=3):
+        m = r["metadata"]
+        print(f"  [{r['similarite']:.3f}] {m['titre']} — {m['type_plaie']}/{m['categorie']}")
+
+    print("\n--- Diagnostic CNN = 'venous_ulcers' : protocole de traitement ---")
+    for r in search_kb("traitement et prise en charge", type_plaie="venous_ulcers", k=3):
+        m = r["metadata"]
+        print(f"  [{r['similarite']:.3f}] {m['titre']} — {m['categorie']}")

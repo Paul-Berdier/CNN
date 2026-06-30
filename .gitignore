@@ -1,6 +1,7 @@
 # Donnees brutes
 data/raw/*
 data/processed/*
+data/ood_samples/*
 
 # DB
 chroma_db/*

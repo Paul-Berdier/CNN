@@ -5,11 +5,6 @@ import torch
 from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset
 
-# NOTE: data/processed/data_preprocess.pkl a été sérialisé avec une pandas 3.0
-# pré-release (StringDtype 'python'/na_value=nan). Avec pandas 2.3.3 (version du
-# projet), pd.read_pickle lève NotImplementedError. Voir échange d'équipe pour
-# décider de l'alignement de version avant d'utiliser ce module en l'état.
-
 
 class WoundDataset(Dataset):
     """Dataset PyTorch lisant un DataFrame (colonnes 'Class' et 'img_preprocess')."""

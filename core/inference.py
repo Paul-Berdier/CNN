@@ -1,9 +1,12 @@
 """Chargement d'un modèle entraîné (checkpoint scripts/train.py) et prédiction sur une image."""
 
 import json
+import os
 
 import torch
+from PIL import Image
 
+from core.autoencoder import AE_TRANSFORMS, WoundAutoencoder
 from core.data_processing import preprocess_img
 from core.model_utils import build_resnet50, build_vgg16, build_efficientnet_b0
 
@@ -34,13 +37,46 @@ def load_model(checkpoint_prefix, device=None):
     return model, class_to_idx
 
 
-def predict_image(model, image, class_to_idx, device=None, top_k=3):
+def load_ood_filter(models_dir="models", device=None):
+    """Charge l'autoencoder OOD + son seuil calibré (scripts/train_autoencoder.py).
+
+    Retourne (ood_model, threshold).
+    """
+    device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    with open(os.path.join(models_dir, "ood_threshold.json"), encoding="utf-8") as f:
+        threshold = json.load(f)["threshold"]
+
+    ood_model = WoundAutoencoder().to(device)
+    weights_path = os.path.join(models_dir, "wound_autoencoder.pth")
+    ood_model.load_state_dict(torch.load(weights_path, map_location=device))
+    ood_model.eval()
+
+    return ood_model, threshold
+
+
+def predict_image(model, image, class_to_idx, device=None, top_k=3, ood_model=None, ood_threshold=None):
     """Prédit la classe d'une image (PIL.Image ou np.ndarray).
+
+    Si ood_model/ood_threshold sont fournis (cf. load_ood_filter), l'image est d'abord
+    passée par le filtre hors-domaine (Exercice 1.7) : si son erreur de reconstruction
+    dépasse le seuil, la classification n'est pas effectuée et la fonction retourne
+    ("hors_domaine", erreur_reconstruction, []).
 
     Retourne (classe_predite, confiance, top_k) où top_k est une liste
     [(classe, probabilité), ...] triée par probabilité décroissante.
     """
     device = device or next(model.parameters()).device
+
+    if ood_model is not None and ood_threshold is not None:
+        pil_image = image if isinstance(image, Image.Image) else Image.fromarray(image)
+        ae_tensor = AE_TRANSFORMS(pil_image).unsqueeze(0).to(device)
+        with torch.no_grad():
+            recon = ood_model(ae_tensor)
+            reconstruction_error = torch.mean((recon - ae_tensor) ** 2).item()
+        if reconstruction_error > ood_threshold:
+            return "hors_domaine", reconstruction_error, []
+
     idx_to_class = {i: c for c, i in class_to_idx.items()}
 
     tensor = preprocess_img(image).unsqueeze(0).to(device)
